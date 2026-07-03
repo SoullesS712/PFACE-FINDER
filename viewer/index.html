@@ -50,6 +50,24 @@ a{color:var(--gold);text-decoration:none}
 .lc-err{color:var(--danger);font-size:13px;min-height:19px;margin:2px 0 6px}
 .login-card .btn{width:100%}
 
+/* ---------- dialog กลาง (แทน prompt/confirm ของ browser) ---------- */
+.dlg-ov{position:fixed;inset:0;background:rgba(10,8,5,.82);backdrop-filter:blur(8px);z-index:95;
+  display:flex;align-items:center;justify-content:center;padding:20px}
+.dlg{background:linear-gradient(165deg,var(--surface) 0%,var(--surface2) 100%);
+  border:1px solid rgba(217,164,65,.28);border-radius:20px;padding:24px 22px;width:100%;max-width:380px;
+  box-shadow:0 24px 64px rgba(0,0,0,.55)}
+.dlg h3{font-size:17px;color:var(--ivory);font-weight:600}
+.dlg .d-desc{font-size:13px;color:var(--muted);margin:6px 0 12px;line-height:1.55}
+.dlg .d-btns{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}
+.dlg .d-btns .btn{flex:1;min-width:110px;padding:12px 10px;font-size:14px}
+.btn.danger{background:var(--danger);color:#fff}
+
+/* ---------- drag บุคคลเข้ากลุ่ม ---------- */
+.rail-sec{border-radius:14px;padding:2px 6px;margin:0 -6px}
+.rail-sec.drop-hot{outline:2px dashed var(--gold);outline-offset:2px;background:rgba(217,164,65,.07)}
+.admin .person[draggable="true"]{cursor:grab}
+.person.dragging{opacity:.4}
+
 /* ---------- header ---------- */
 header{padding:14px 0 6px}
 .eyebrow{font-size:11px;letter-spacing:.18em;color:var(--gold);text-transform:uppercase}
@@ -193,6 +211,51 @@ const $ = s => document.querySelector(s);
 const el = (t, cls, html) => { const e = document.createElement(t); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 const toast = m => { const t = $("#toast"); t.textContent = m; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 1800); };
 
+/* dialog กลางธีมเดียวกับเว็บ — คืน Promise:
+   ปุ่ม primary จะ resolve เป็น array ค่าจาก fields, ปุ่มอื่น resolve เป็น value ที่ตั้งไว้, ปิด/ยกเลิก = null */
+function dlg({ title, desc, fields = [], buttons }) {
+  return new Promise(resolve => {
+    const ov = el("div", "dlg-ov");
+    const box = el("div", "dlg");
+    box.append(el("h3", null, title));
+    if (desc) box.append(el("div", "d-desc", desc));
+    const inputs = fields.map(f => {
+      const w = el("div", "lc-field");
+      if (f.icon) w.append(el("span", "ic", f.icon));
+      const inp = el("input");
+      inp.type = f.type || "text";
+      inp.placeholder = f.placeholder || "";
+      if (f.value != null) inp.value = f.value;
+      w.append(inp);
+      box.append(w);
+      return inp;
+    });
+    const err = el("div", "lc-err", "");
+    if (fields.length) box.append(err);
+    const row = el("div", "d-btns");
+    const done = v => { ov.remove(); resolve(v); };
+    let primaryBtn = null;
+    buttons.forEach(b => {
+      const btn = el("button", "btn " + (b.cls || "line"), b.label);
+      btn.onclick = () => {
+        if (b.primary) {
+          const vals = inputs.map(i => i.value);
+          if (b.validate) { const m = b.validate(vals); if (m) { err.textContent = m; return; } }
+          done(vals);
+        } else done("value" in b ? b.value : null);
+      };
+      if (b.primary) primaryBtn = btn;
+      row.append(btn);
+    });
+    box.append(row);
+    ov.onclick = e => { if (e.target === ov) done(null); };
+    inputs.forEach(i => { i.onkeydown = e => { if (e.key === "Enter" && primaryBtn) primaryBtn.click(); }; });
+    ov.append(box);
+    document.body.append(ov);
+    if (inputs[0]) { inputs[0].focus(); inputs[0].select(); }
+  });
+}
+
 /* ---------- URL รูป: รองรับ Drive / ไฟล์ local / โหมด standalone ---------- */
 const INLINE = window.__INLINE__ || null;   // {data, files:{relPath:dataURI}}
 const base = () => `projects/${SLUG}/`;
@@ -224,10 +287,9 @@ async function boot() {
     }
   }
   if (sessionStorage.getItem(adminSes()) || localStorage.getItem(adminSes())) ADMIN = true;
-  else if (WANT_ADMIN && !hasUsers()) ADMIN = true; // ยังไม่ตั้งรหัส -> ?admin=1 เข้าแบบเดิม
   applyDraft();
   render();
-  if (WANT_ADMIN && !ADMIN) loginFlow();
+  if (WANT_ADMIN && !ADMIN) loginFlow(); // ต้อง login/สมัครก่อนเสมอ ไม่มีทางลัด
 }
 
 /* ---------- โหมดช่างภาพ: login ด้วย user/รหัสผ่าน (hash เก็บใน data.json) ---------- */
@@ -247,13 +309,26 @@ function enterAdmin(remember) {
   toast("เข้าโหมดช่างภาพแล้ว");
 }
 
+async function registerFlow() {
+  const v = await dlg({
+    title: "สมัครผู้ดูแลงาน",
+    desc: "งานนี้ยังไม่มีผู้ดูแล — สร้างบัญชีแรกเพื่อเข้าโหมดช่างภาพ (บัญชีจะถูกล็อกถาวรเมื่อกดบันทึกขึ้นเว็บ)",
+    fields: [{ icon: "👤", placeholder: "ชื่อผู้ใช้" },
+             { icon: "🔒", placeholder: "รหัสผ่าน", type: "password" },
+             { icon: "🔒", placeholder: "ยืนยันรหัสผ่าน", type: "password" }],
+    buttons: [{ label: "ยกเลิก" }, { label: "สมัครและเข้าสู่ระบบ", cls: "gold", primary: true,
+                validate: vs => !vs[0].trim() ? "กรุณาใส่ชื่อผู้ใช้"
+                              : vs[1].length < 4 ? "รหัสผ่านอย่างน้อย 4 ตัวอักษร"
+                              : vs[1] !== vs[2] ? "รหัสผ่านไม่ตรงกัน" : "" }],
+  });
+  if (!v) return;
+  applyOp({ t: "user", u: v[0].trim(), h: await sha256(v[1]) });
+  enterAdmin(false);
+}
+
 function loginFlow() {
   if (ADMIN || !DATA) return;
-  if (!hasUsers()) {
-    enterAdmin(false);
-    toast("ยังไม่มีผู้ใช้ admin — ตั้งได้ที่ปุ่ม ผู้ใช้ admin");
-    return;
-  }
+  if (!hasUsers()) return registerFlow();
   const ov = el("div", "login-ov");
   ov.onclick = e => { if (e.target === ov) ov.remove(); };
   const card = el("div", "login-card");
@@ -305,15 +380,24 @@ function undoLast() {
 }
 
 async function manageUsers() {
-  const u = prompt("ชื่อผู้ใช้ (ตั้งใหม่ หรือพิมพ์ชื่อเดิมเพื่อแก้/ลบ)");
-  if (!u || !u.trim()) return;
-  const pw = prompt(`รหัสผ่านของ "${u.trim()}" (เว้นว่าง = ลบผู้ใช้นี้)`);
-  if (pw === null) return;
-  if (!pw) { applyOp({ t: "user", u: u.trim(), h: null }); toast("ลบผู้ใช้แล้ว"); }
+  const users = Object.keys(DATA.adminUsers || {});
+  const v = await dlg({
+    title: "ผู้ใช้ admin",
+    desc: (users.length ? `ผู้ใช้ปัจจุบัน: ${users.join(", ")} · ` : "")
+      + "ตั้งใหม่หรือพิมพ์ชื่อเดิมเพื่อเปลี่ยนรหัส · เว้นว่างรหัสผ่าน = ลบผู้ใช้นั้น",
+    fields: [{ icon: "👤", placeholder: "ชื่อผู้ใช้" },
+             { icon: "🔒", placeholder: "รหัสผ่าน", type: "password" }],
+    buttons: [{ label: "ยกเลิก" }, { label: "บันทึก", cls: "gold", primary: true,
+                validate: vs => vs[0].trim() ? "" : "กรุณาใส่ชื่อผู้ใช้" }],
+  });
+  if (!v) return;
+  const u = v[0].trim(), pw = v[1];
+  if (!pw) { applyOp({ t: "user", u, h: null }); toast("ลบผู้ใช้แล้ว"); }
   else {
-    applyOp({ t: "user", u: u.trim(), h: await sha256(pw) });
-    toast("บันทึกแล้ว — มีผลบนเว็บจริงหลังส่งออก data.json");
+    applyOp({ t: "user", u, h: await sha256(pw) });
+    toast("บันทึกผู้ใช้แล้ว — มีผลถาวรเมื่อกดบันทึกขึ้นเว็บ");
   }
+  render();
 }
 
 async function landing() {
@@ -448,7 +532,7 @@ function renderInner() {
 
   if (ADMIN) {
     c.append(el("div", "admin-note",
-      `โหมดช่างภาพ — <b>รวมบุคคล</b> (ติ๊กหลายกลุ่มที่เป็นคนเดียวกัน แล้วกดรวม) · <b>ย้ายรายหน้า</b> (เปิดรูป แตะหน้าที่ผิดคน) · <b>ลบ ไม่ใช่คน</b> (พระพุทธรูป/ลายเสื้อ) · <b>ตั้งชื่อ</b> (ติ๊ก 1 คนแล้วกด หรือแตะชื่อค้าง) · <b>จัดกลุ่ม</b> = ติดป้ายหมวด เช่น ครอบครัว/เพื่อน · <b>เรียงเลขใหม่</b> = รีเซ็ตเลข "คนที่ n" ให้ต่อเนื่อง · ทำพลาดกด <b>↩ ย้อนกลับ</b> ได้ทีละขั้น · เสร็จแล้วกด "ส่งออก data.json" นำไปวางทับของเดิม`));
+      `โหมดช่างภาพ — <b>รวมบุคคล</b> (ติ๊กหลายกลุ่มที่เป็นคนเดียวกัน แล้วกดรวม) · <b>ย้ายรายหน้า</b> (เปิดรูป แตะหน้าที่ผิดคน) · <b>ลบ ไม่ใช่คน</b> (พระพุทธรูป/ลายเสื้อ) · <b>ตั้งชื่อ</b> (ติ๊ก 1 คนแล้วกด หรือแตะชื่อค้าง) · <b>จัดกลุ่ม</b> = ติดป้ายหมวด เช่น ครอบครัว/เพื่อน · <b>เรียงเลขใหม่</b> = รีเซ็ตเลข "คนที่ n" ให้ต่อเนื่อง · ทำพลาดกด <b>↩ ย้อนกลับ</b> ได้ทีละขั้น · สร้างกลุ่มแล้ว<b>ลากรูปคน</b>ไปวางที่แถบกลุ่มเพื่อย้ายได้เลย · เสร็จแล้วกด <b>💾 บันทึกขึ้นเว็บ</b> แขกเห็นทันทีใน ~1 นาที`));
   }
 
   // แยกแถบใบหน้าตามกลุ่มที่ช่างภาพจัดไว้ (field group เป็น optional)
@@ -458,18 +542,35 @@ function renderInner() {
     if (!byGroup.has(g)) byGroup.set(g, []);
     byGroup.get(g).push(p);
   });
-  const addRail = (label, members) => {
+  const addRail = (label, members, gname) => {
+    const sec = el("div", "rail-sec");
+    sec.dataset.group = gname;
     const rl = el("div", "rail-label");
-    rl.append(el("h2", null, label), el("span", null, `${members.length} คน`));
-    c.append(rl);
+    rl.append(el("h2", null, label), el("span", null, `${members.length} คน`
+      + (ADMIN ? " · ลากรูปคนมาวางที่นี่เพื่อย้ายกลุ่ม" : "")));
     const rail = el("div", "rail");
     members.forEach(p => rail.append(personChip(p, "rail")));
-    c.append(rail);
+    sec.append(rl, rail);
+    if (ADMIN) {
+      sec.ondragover = e => { e.preventDefault(); sec.classList.add("drop-hot"); };
+      sec.ondragleave = e => { if (!sec.contains(e.relatedTarget)) sec.classList.remove("drop-hot"); };
+      sec.ondrop = e => {
+        e.preventDefault();
+        sec.classList.remove("drop-hot");
+        const pid = e.dataTransfer.getData("text/pid");
+        const p = pid && DATA.people.find(x => x.id === pid);
+        if (!p || (p.group || "") === gname) return;
+        applyOp({ t: "grp", ids: [pid], g: gname });
+        toast(gname ? `ย้าย "${p.name}" เข้ากลุ่ม "${gname}"` : `เอา "${p.name}" ออกจากกลุ่ม`);
+        render();
+      };
+    }
+    c.append(sec);
   };
   const named = [...byGroup.keys()].filter(g => g);
-  named.forEach(g => addRail(g, byGroup.get(g)));
+  named.forEach(g => addRail(g, byGroup.get(g), g));
   const rest = byGroup.get("") || [];
-  if (rest.length) addRail(named.length ? "คนอื่นๆ" : "คนในงานนี้", rest);
+  if (rest.length || (ADMIN && named.length)) addRail(named.length ? "คนอื่นๆ" : "คนในงานนี้", rest, "");
 
   const bar = el("div", "bar");
   if (activePerson) {
@@ -510,8 +611,9 @@ function renderInner() {
       localStorage.removeItem(adminSes());
       location.href = location.pathname + (SLUG ? "?p=" + encodeURIComponent(SLUG) : "");
     };
-    const ex = el("button", "chip", "ส่งออก data.json");
-    ex.onclick = exportJSON;
+    const canSave = GH && SLUG && !INLINE;
+    const ex = el("button", "chip" + (canSave ? " gold" : ""), canSave ? "💾 บันทึกขึ้นเว็บ" : "ส่งออก data.json");
+    ex.onclick = canSave ? saveToWeb : exportJSON;
     bar.append(mg, del, nm, grp, rn, un, us, ex, lo);
   }
   c.append(bar);
@@ -562,6 +664,15 @@ function personChip(p, ctx) {
     d.onpointerdown = () => { t = setTimeout(() => renamePerson(p.id), 600); };
     // ต้องมี pointercancel ด้วย: ตอน scroll แถบบนมือถือ browser ยิง cancel ไม่ใช่ up/leave
     d.onpointerup = d.onpointerleave = d.onpointercancel = () => clearTimeout(t);
+    // ลากเข้ากลุ่ม (เดสก์ท็อป) — มือถือใช้ปุ่มจัดกลุ่มแทน
+    d.draggable = true;
+    d.ondragstart = e => {
+      clearTimeout(t);
+      e.dataTransfer.setData("text/pid", p.id);
+      e.dataTransfer.effectAllowed = "move";
+      d.classList.add("dragging");
+    };
+    d.ondragend = () => d.classList.remove("dragging");
   }
   d.onclick = () => { activePerson = (activePerson === p.id ? null : p.id); closeLB(); render(); };
   return d;
@@ -587,12 +698,18 @@ function updateAdminBar() {
   if (nm) nm.disabled = selected.size !== 1;
 }
 
-function groupSelected() {
-  const g = prompt('ตั้งชื่อกลุ่ม เช่น "ครอบครัว" / "เพื่อน" (เว้นว่าง = เอาออกจากกลุ่ม)', "");
-  if (g === null) return;
-  applyOp({ t: "grp", ids: [...selected], g: g.trim() });
+async function groupSelected() {
+  const v = await dlg({
+    title: "จัดเข้ากลุ่ม",
+    desc: "พิมพ์ชื่อกลุ่มใหม่หรือกลุ่มที่มีอยู่ · เว้นว่าง = เอาออกจากกลุ่ม · สร้างกลุ่มแล้วลาก tag บุคคลเข้ากลุ่มได้เลย",
+    fields: [{ icon: "🏷️", placeholder: "เช่น ครอบครัว / เพื่อนมหาลัย" }],
+    buttons: [{ label: "ยกเลิก" }, { label: "ตกลง", cls: "gold", primary: true }],
+  });
+  if (v === null) return;
+  const g = v[0].trim();
+  applyOp({ t: "grp", ids: [...selected], g });
   selected.clear();
-  toast(g.trim() ? `จัดเข้ากลุ่ม "${g.trim()}" แล้ว` : "เอาออกจากกลุ่มแล้ว");
+  toast(g ? `จัดเข้ากลุ่ม "${g}" แล้ว` : "เอาออกจากกลุ่มแล้ว");
   render();
 }
 
@@ -612,19 +729,88 @@ function mergeSelected() {
   render();
 }
 
-function deleteSelected() {
+async function deleteSelected() {
   const names = DATA.people.filter(p => selected.has(p.id)).map(p => p.name).join(", ");
-  if (!confirm(`ลบ ${selected.size} กลุ่มนี้ออกถาวร (${names})?\nใช้กับกลุ่มที่ไม่ใช่คน เช่น พระพุทธรูป/ลายเสื้อ`)) return;
+  const v = await dlg({
+    title: `ลบ ${selected.size} รายการ?`,
+    desc: `${names} — ใช้กับสิ่งที่ไม่ใช่คน เช่น พระพุทธรูป/ลายเสื้อ (ย้อนกลับได้ด้วยปุ่ม ↩)`,
+    buttons: [{ label: "ยกเลิก" }, { label: "ลบ", cls: "danger", value: true }],
+  });
+  if (!v) return;
   [...selected].forEach(id => applyOp({ t: "del", id }));
   selected.clear();
   toast("ลบแล้ว");
   render();
 }
 
-function renamePerson(id) {
+async function renamePerson(id) {
   const p = DATA.people.find(x => x.id === id);
-  const nm = prompt("ตั้งชื่อคนนี้", p.name);
-  if (nm && nm.trim()) { applyOp({ t: "name", id, nm: nm.trim() }); render(); }
+  if (!p) return;
+  const v = await dlg({
+    title: "ตั้งชื่อบุคคล",
+    fields: [{ icon: "✏️", value: p.name, placeholder: "เช่น พระพี / แม่ / เพื่อนโต" }],
+    buttons: [{ label: "ยกเลิก" }, { label: "บันทึกชื่อ", cls: "gold", primary: true,
+                validate: vs => vs[0].trim() ? "" : "กรุณาใส่ชื่อ" }],
+  });
+  if (v) { applyOp({ t: "name", id, nm: v[0].trim() }); render(); }
+}
+
+/* ---------- บันทึกขึ้นเว็บจริงผ่าน GitHub API (เมื่อโฮสต์บน *.github.io) ---------- */
+const GH = (() => {
+  const m = location.host.match(/^([^.]+)\.github\.io$/);
+  if (!m) return null;
+  const seg = location.pathname.split("/").filter(Boolean);
+  return seg.length ? { owner: m[1], repo: seg[0] } : null;
+})();
+
+async function saveToWeb() {
+  const c = await dlg({
+    title: "บันทึกขึ้นเว็บจริง?",
+    desc: "การแก้ไขทั้งหมด (ชื่อ กลุ่ม การรวม/ลบ ผู้ใช้ admin) จะเผยแพร่ให้แขกเห็นภายใน ~1 นาที",
+    buttons: [{ label: "ยกเลิก" }, { label: "ดาวน์โหลดไฟล์แทน", value: "file" },
+              { label: "ยืนยันบันทึก", cls: "gold", value: true }],
+  });
+  if (!c) return;
+  if (c === "file") return exportJSON();
+  let tok = localStorage.getItem("ff-ghtoken");
+  if (!tok) {
+    const v = await dlg({
+      title: "เชื่อมต่อ GitHub (ครั้งแรกครั้งเดียว)",
+      desc: "ใส่ GitHub token ที่มีสิทธิ์เขียน repo นี้ (สร้างที่ github.com/settings/tokens) — token เก็บเฉพาะในเครื่องนี้ ไม่ฝังลงเว็บ",
+      fields: [{ icon: "🔑", placeholder: "ghp_... หรือ github_pat_...", type: "password" }],
+      buttons: [{ label: "ยกเลิก" }, { label: "บันทึก token", cls: "gold", primary: true,
+                  validate: vs => vs[0].trim() ? "" : "กรุณาใส่ token" }],
+    });
+    if (!v) return;
+    tok = v[0].trim();
+    localStorage.setItem("ff-ghtoken", tok);
+  }
+  const api = `https://api.github.com/repos/${GH.owner}/${GH.repo}/contents/viewer/projects/${encodeURIComponent(SLUG)}/data.json`;
+  const hdr = { Authorization: "Bearer " + tok, Accept: "application/vnd.github+json" };
+  toast("กำลังบันทึก...");
+  try {
+    const cur = await fetch(api, { headers: hdr });
+    if (cur.status === 401 || cur.status === 403) {
+      localStorage.removeItem("ff-ghtoken");
+      return dlg({ title: "Token ใช้ไม่ได้", desc: `GitHub ตอบ ${cur.status} — เช็คสิทธิ์ repo แล้วกดบันทึกใหม่เพื่อใส่ token อีกครั้ง`, buttons: [{ label: "ปิด" }] });
+    }
+    const sha = cur.ok ? (await cur.json()).sha : undefined;
+    const body = JSON.stringify(DATA);
+    const bytes = new TextEncoder().encode(body);
+    let bin = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    const put = await fetch(api, {
+      method: "PUT", headers: hdr,
+      body: JSON.stringify({ message: `Update ${SLUG} data.json via admin`, content: btoa(bin), sha, branch: "master" }),
+    });
+    if (!put.ok) throw new Error(`GitHub ตอบ ${put.status}: ${(await put.text()).slice(0, 120)}`);
+    RAW = body;                                // baseline ใหม่ = สิ่งที่เพิ่งบันทึก
+    localStorage.removeItem(draftKey());       // draft ถูกรวมเข้า baseline แล้ว
+    render();
+    dlg({ title: "บันทึกสำเร็จ ✓", desc: "เว็บจริงกำลังอัปเดต แขกจะเห็นเวอร์ชันล่าสุดภายใน ~1 นาที", buttons: [{ label: "ตกลง", cls: "gold" }] });
+  } catch (e) {
+    dlg({ title: "บันทึกไม่สำเร็จ", desc: String(e.message || e) + " — ใช้ปุ่มบันทึกอีกครั้ง หรือดาวน์โหลดไฟล์แทน", buttons: [{ label: "ปิด" }] });
+  }
 }
 
 function exportJSON() {
