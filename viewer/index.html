@@ -27,8 +27,28 @@ a{color:var(--gold);text-decoration:none}
 .wrap{max-width:1100px;margin:0 auto;padding:0 14px;position:relative}
 .admin-launch{position:absolute;top:14px;right:14px;font-size:12px;color:var(--muted);
   border:1px solid var(--surface2);border-radius:999px;padding:8px 14px;background:var(--surface)}
-.login-field{display:block;width:100%;margin:8px 0;padding:12px;border-radius:10px;
-  border:1px solid var(--surface2);background:var(--ink);color:var(--ivory);font-size:15px;font-family:inherit}
+/* ---------- login card ---------- */
+.login-ov{position:fixed;inset:0;background:rgba(10,8,5,.82);backdrop-filter:blur(8px);z-index:90;
+  display:flex;align-items:center;justify-content:center;padding:20px}
+.login-card{background:linear-gradient(165deg,var(--surface) 0%,var(--surface2) 100%);
+  border:1px solid rgba(217,164,65,.28);border-radius:22px;padding:30px 26px 26px;width:100%;max-width:360px;
+  box-shadow:0 24px 64px rgba(0,0,0,.55);text-align:center}
+.lc-ava{width:72px;height:72px;border-radius:50%;margin:0 auto 14px;font-size:30px;
+  background:rgba(217,164,65,.12);border:1px solid rgba(217,164,65,.45);
+  display:flex;align-items:center;justify-content:center}
+.login-card h3{font-family:'Chonburi',serif;font-weight:400;font-size:21px;color:var(--ivory)}
+.lc-sub{font-size:12px;color:var(--muted);margin:5px 0 20px}
+.lc-field{display:flex;align-items:center;gap:10px;background:var(--ink);border:1px solid var(--surface2);
+  border-radius:12px;padding:0 14px;margin:10px 0;transition:border-color .15s}
+.lc-field:focus-within{border-color:var(--gold)}
+.lc-field .ic{font-size:14px;opacity:.55}
+.lc-field input{flex:1;background:none;border:none;outline:none;color:var(--ivory);
+  font-size:15px;font-family:inherit;padding:13px 0;min-width:0}
+.lc-row{display:flex;align-items:center;font-size:12px;color:var(--muted);margin:6px 2px 4px}
+.lc-row label{display:flex;align-items:center;gap:7px;cursor:pointer}
+.lc-row input{accent-color:var(--gold)}
+.lc-err{color:var(--danger);font-size:13px;min-height:19px;margin:2px 0 6px}
+.login-card .btn{width:100%}
 
 /* ---------- header ---------- */
 header{padding:14px 0 6px}
@@ -163,6 +183,7 @@ const SLUG = qs.get("p");
 const WANT_ADMIN = qs.get("admin") === "1";
 let ADMIN = false; // ได้สิทธิ์เมื่อ: ไม่มี user ตั้งไว้ (โหมดเดิม) หรือ login ผ่าน หรือมี session ค้าง
 let DATA = null;
+let RAW = null;  // สำเนา data.json ดั้งเดิม (ยังไม่ apply draft) ใช้ตอน undo
 let activePerson = null;   // personId ที่เลือกดู
 let selected = new Set();  // admin: คนที่เลือกเพื่อ merge
 let lbList = [];           // รายการ photo ids ใน lightbox ปัจจุบัน
@@ -189,19 +210,20 @@ const driveView = ph => ph.printId ? `https://drive.google.com/file/d/${ph.print
 
 /* ---------- โหลดข้อมูล ---------- */
 async function boot() {
-  if (INLINE) { DATA = INLINE.data; }
+  if (INLINE) { RAW = JSON.stringify(INLINE.data); DATA = JSON.parse(RAW); }
   else if (!SLUG) return landing();
   else {
     try {
       const r = await fetch(base() + "data.json");
       DATA = await r.json();
+      RAW = JSON.stringify(DATA);
     } catch (e) {
       $("#pj-title").textContent = "ไม่พบข้อมูลโปรเจกต์";
       $("#pj-sub").textContent = "เช็คลิงก์อีกครั้ง หรือติดต่อช่างภาพ";
       return;
     }
   }
-  if (sessionStorage.getItem(adminSes())) ADMIN = true;
+  if (sessionStorage.getItem(adminSes()) || localStorage.getItem(adminSes())) ADMIN = true;
   else if (WANT_ADMIN && !hasUsers()) ADMIN = true; // ยังไม่ตั้งรหัส -> ?admin=1 เข้าแบบเดิม
   applyDraft();
   render();
@@ -217,9 +239,9 @@ async function sha256(s) {
   return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, "0")).join("");
 }
 
-function enterAdmin() {
+function enterAdmin(remember) {
   ADMIN = true;
-  sessionStorage.setItem(adminSes(), "1");
+  (remember ? localStorage : sessionStorage).setItem(adminSes(), "1");
   applyDraft();
   render();
   toast("เข้าโหมดช่างภาพแล้ว");
@@ -228,31 +250,58 @@ function enterAdmin() {
 function loginFlow() {
   if (ADMIN || !DATA) return;
   if (!hasUsers()) {
-    enterAdmin();
+    enterAdmin(false);
     toast("ยังไม่มีผู้ใช้ admin — ตั้งได้ที่ปุ่ม ผู้ใช้ admin");
     return;
   }
-  const ov = el("div", "picker");
+  const ov = el("div", "login-ov");
   ov.onclick = e => { if (e.target === ov) ov.remove(); };
-  const panel = el("div", "picker-panel");
-  panel.append(el("h3", null, "เข้าสู่โหมดช่างภาพ"),
-               el("p", null, "เฉพาะช่างภาพ/ผู้ดูแลงาน — แขกดูรูปได้เลยไม่ต้องเข้าสู่ระบบ"));
-  const wrap = el("div", "picker-list");
-  const u = el("input", "login-field"); u.placeholder = "ชื่อผู้ใช้";
-  const pw = el("input", "login-field"); pw.type = "password"; pw.placeholder = "รหัสผ่าน";
+  const card = el("div", "login-card");
+  card.append(
+    el("div", "lc-ava", "📷"),
+    el("h3", null, "โหมดช่างภาพ"),
+    el("div", "lc-sub", DATA.project + " · เข้าสู่ระบบเพื่อจัดการรูปและบุคคล"));
+  const fu = el("div", "lc-field");
+  fu.append(el("span", "ic", "👤"));
+  const u = el("input"); u.placeholder = "ชื่อผู้ใช้"; u.autocomplete = "username";
+  fu.append(u);
+  const fp = el("div", "lc-field");
+  fp.append(el("span", "ic", "🔒"));
+  const pw = el("input"); pw.type = "password"; pw.placeholder = "รหัสผ่าน"; pw.autocomplete = "current-password";
+  fp.append(pw);
+  const row = el("div", "lc-row");
+  const lbl = el("label");
+  const cb = el("input"); cb.type = "checkbox";
+  lbl.append(cb, document.createTextNode("จดจำการเข้าสู่ระบบในเครื่องนี้"));
+  row.append(lbl);
+  const err = el("div", "lc-err", "");
   const btn = el("button", "btn gold", "เข้าสู่ระบบ");
-  btn.style.width = "100%";
   btn.onclick = async () => {
     const h = await sha256(pw.value);
-    if ((DATA.adminUsers || {})[u.value.trim()] === h) { ov.remove(); enterAdmin(); }
-    else toast("ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง");
+    if ((DATA.adminUsers || {})[u.value.trim()] === h) { ov.remove(); enterAdmin(cb.checked); }
+    else { err.textContent = "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง"; pw.value = ""; pw.focus(); }
   };
-  pw.onkeydown = e => { if (e.key === "Enter") btn.click(); };
-  wrap.append(u, pw, btn);
-  panel.append(wrap);
-  ov.append(panel);
+  u.onkeydown = pw.onkeydown = e => { if (e.key === "Enter") btn.click(); };
+  card.append(fu, fp, row, err, btn);
+  ov.append(card);
   document.body.append(ov);
   u.focus();
+}
+
+/* ---------- undo: ย้อน action ล่าสุด (ถอด op สุดท้ายแล้ว replay ที่เหลือจากข้อมูลดั้งเดิม) ---------- */
+const OP_LABELS = { merge: "รวมบุคคล", move: "ย้ายหน้า", name: "ตั้งชื่อ", del: "ลบกลุ่ม",
+                    grp: "จัดกลุ่ม", renum: "เรียงเลขใหม่", user: "แก้ผู้ใช้ admin" };
+function undoLast() {
+  const ops = loadOps();
+  if (!ops.length || !RAW) return;
+  const undone = ops.pop();
+  localStorage.setItem(draftKey(), JSON.stringify(ops));
+  DATA = JSON.parse(RAW);
+  ops.forEach(op => applyOp(op, false));
+  selected.clear();
+  if (activePerson && !DATA.people.find(p => p.id === activePerson)) activePerson = null;
+  toast("ย้อนกลับ: " + (OP_LABELS[undone.t] || undone.t));
+  render();
 }
 
 async function manageUsers() {
@@ -399,7 +448,7 @@ function renderInner() {
 
   if (ADMIN) {
     c.append(el("div", "admin-note",
-      `โหมดช่างภาพ — แก้ได้ 2 ระดับ: <b>รวมกลุ่ม</b> (เลือกหลายคนที่เป็นคนเดียวกันจากวงกลมมุมซ้าย แล้วกดรวมกลุ่ม) , <b>ย้ายรายหน้า</b> (เปิดรูป แตะหน้าที่ผิดคน แล้วเลือกคนที่ถูกหรือแยกเป็นคนใหม่) และ <b>ลบ ไม่ใช่คน</b> (เลือกกลุ่มที่เป็นพระพุทธรูป/ลายเสื้อ แล้วกดลบ) · <b>จัดกลุ่ม</b> = ติดป้ายหมวด เช่น ครอบครัว/เพื่อน (แถบใบหน้าจะแยก section) · <b>เรียงเลขใหม่</b> = รีเซ็ตเลข "คนที่ n" ให้ต่อเนื่องหลังลบ/รวม · แตะชื่อค้างเพื่อเปลี่ยนชื่อ · เสร็จแล้วกด "ส่งออก data.json" นำไปวางทับของเดิม`));
+      `โหมดช่างภาพ — <b>รวมบุคคล</b> (ติ๊กหลายกลุ่มที่เป็นคนเดียวกัน แล้วกดรวม) · <b>ย้ายรายหน้า</b> (เปิดรูป แตะหน้าที่ผิดคน) · <b>ลบ ไม่ใช่คน</b> (พระพุทธรูป/ลายเสื้อ) · <b>ตั้งชื่อ</b> (ติ๊ก 1 คนแล้วกด หรือแตะชื่อค้าง) · <b>จัดกลุ่ม</b> = ติดป้ายหมวด เช่น ครอบครัว/เพื่อน · <b>เรียงเลขใหม่</b> = รีเซ็ตเลข "คนที่ n" ให้ต่อเนื่อง · ทำพลาดกด <b>↩ ย้อนกลับ</b> ได้ทีละขั้น · เสร็จแล้วกด "ส่งออก data.json" นำไปวางทับของเดิม`));
   }
 
   // แยกแถบใบหน้าตามกลุ่มที่ช่างภาพจัดไว้ (field group เป็น optional)
@@ -432,7 +481,7 @@ function renderInner() {
   }
   if (ADMIN) {
     bar.append(el("span", "spacer"));
-    const mg = el("button", "chip gold", `รวมกลุ่ม (${selected.size})`);
+    const mg = el("button", "chip gold", `รวมบุคคล (${selected.size})`);
     mg.id = "btn-merge";
     mg.disabled = selected.size < 2;
     mg.onclick = mergeSelected;
@@ -440,22 +489,30 @@ function renderInner() {
     del.id = "btn-del";
     del.disabled = selected.size < 1;
     del.onclick = deleteSelected;
+    const nm = el("button", "chip", "ตั้งชื่อ");
+    nm.id = "btn-name";
+    nm.disabled = selected.size !== 1;
+    nm.onclick = () => renamePerson([...selected][0]);
     const grp = el("button", "chip", `จัดกลุ่ม (${selected.size})`);
     grp.id = "btn-grp";
     grp.disabled = selected.size < 1;
     grp.onclick = groupSelected;
     const rn = el("button", "chip", "เรียงเลขใหม่");
     rn.onclick = renumber;
+    const un = el("button", "chip", "↩ ย้อนกลับ");
+    un.disabled = !loadOps().length;
+    un.onclick = undoLast;
     const us = el("button", "chip", "ผู้ใช้ admin");
     us.onclick = manageUsers;
     const lo = el("button", "chip", "ออก");
     lo.onclick = () => {
       sessionStorage.removeItem(adminSes());
+      localStorage.removeItem(adminSes());
       location.href = location.pathname + (SLUG ? "?p=" + encodeURIComponent(SLUG) : "");
     };
     const ex = el("button", "chip", "ส่งออก data.json");
     ex.onclick = exportJSON;
-    bar.append(mg, del, grp, rn, us, ex, lo);
+    bar.append(mg, del, nm, grp, rn, un, us, ex, lo);
   }
   c.append(bar);
 
@@ -523,10 +580,11 @@ function toggleSelect(id) {
 }
 
 function updateAdminBar() {
-  const mg = $("#btn-merge"), del = $("#btn-del"), grp = $("#btn-grp");
-  if (mg) { mg.textContent = `รวมกลุ่ม (${selected.size})`; mg.disabled = selected.size < 2; }
+  const mg = $("#btn-merge"), del = $("#btn-del"), grp = $("#btn-grp"), nm = $("#btn-name");
+  if (mg) { mg.textContent = `รวมบุคคล (${selected.size})`; mg.disabled = selected.size < 2; }
   if (del) { del.textContent = `ลบ ไม่ใช่คน (${selected.size})`; del.disabled = selected.size < 1; }
   if (grp) { grp.textContent = `จัดกลุ่ม (${selected.size})`; grp.disabled = selected.size < 1; }
+  if (nm) nm.disabled = selected.size !== 1;
 }
 
 function groupSelected() {
@@ -550,7 +608,7 @@ function mergeSelected() {
   ids.filter(i => i !== target).forEach(i => applyOp({ t: "merge", into: target, from: i }));
   selected.clear();
   if (activePerson && ids.includes(activePerson)) activePerson = target;
-  toast("รวมกลุ่มแล้ว");
+  toast("รวมบุคคลแล้ว");
   render();
 }
 
