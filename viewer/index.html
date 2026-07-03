@@ -24,7 +24,11 @@ body{background:var(--ink);color:var(--ivory);font-family:'Anuphan',system-ui,sa
 img{display:block}
 button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
 a{color:var(--gold);text-decoration:none}
-.wrap{max-width:1100px;margin:0 auto;padding:0 14px}
+.wrap{max-width:1100px;margin:0 auto;padding:0 14px;position:relative}
+.admin-launch{position:absolute;top:14px;right:14px;font-size:12px;color:var(--muted);
+  border:1px solid var(--surface2);border-radius:999px;padding:8px 14px;background:var(--surface)}
+.login-field{display:block;width:100%;margin:8px 0;padding:12px;border-radius:10px;
+  border:1px solid var(--surface2);background:var(--ink);color:var(--ivory);font-size:15px;font-family:inherit}
 
 /* ---------- header ---------- */
 header{padding:14px 0 6px}
@@ -128,6 +132,7 @@ h1.title{font-family:'Chonburi',serif;font-weight:400;font-size:clamp(21px,5vw,3
 </head>
 <body>
 <div class="wrap" id="app">
+  <button class="admin-launch" id="btn-admin" onclick="loginFlow()" style="display:none">ช่างภาพ</button>
   <header>
     <div class="eyebrow">Face Finder</div>
     <h1 class="title" id="pj-title">กำลังโหลด…</h1>
@@ -155,7 +160,8 @@ h1.title{font-family:'Chonburi',serif;font-weight:400;font-size:clamp(21px,5vw,3
 "use strict";
 const qs = new URLSearchParams(location.search);
 const SLUG = qs.get("p");
-const ADMIN = qs.get("admin") === "1";
+const WANT_ADMIN = qs.get("admin") === "1";
+let ADMIN = false; // ได้สิทธิ์เมื่อ: ไม่มี user ตั้งไว้ (โหมดเดิม) หรือ login ผ่าน หรือมี session ค้าง
 let DATA = null;
 let activePerson = null;   // personId ที่เลือกดู
 let selected = new Set();  // admin: คนที่เลือกเพื่อ merge
@@ -183,18 +189,82 @@ const driveView = ph => ph.printId ? `https://drive.google.com/file/d/${ph.print
 
 /* ---------- โหลดข้อมูล ---------- */
 async function boot() {
-  if (INLINE) { DATA = INLINE.data; applyDraft(); render(); return; }
-  if (!SLUG) return landing();
-  try {
-    const r = await fetch(base() + "data.json");
-    DATA = await r.json();
-  } catch (e) {
-    $("#pj-title").textContent = "ไม่พบข้อมูลโปรเจกต์";
-    $("#pj-sub").textContent = "เช็คลิงก์อีกครั้ง หรือติดต่อช่างภาพ";
-    return;
+  if (INLINE) { DATA = INLINE.data; }
+  else if (!SLUG) return landing();
+  else {
+    try {
+      const r = await fetch(base() + "data.json");
+      DATA = await r.json();
+    } catch (e) {
+      $("#pj-title").textContent = "ไม่พบข้อมูลโปรเจกต์";
+      $("#pj-sub").textContent = "เช็คลิงก์อีกครั้ง หรือติดต่อช่างภาพ";
+      return;
+    }
   }
+  if (sessionStorage.getItem(adminSes())) ADMIN = true;
+  else if (WANT_ADMIN && !hasUsers()) ADMIN = true; // ยังไม่ตั้งรหัส -> ?admin=1 เข้าแบบเดิม
   applyDraft();
   render();
+  if (WANT_ADMIN && !ADMIN) loginFlow();
+}
+
+/* ---------- โหมดช่างภาพ: login ด้วย user/รหัสผ่าน (hash เก็บใน data.json) ---------- */
+const adminSes = () => `ff-admin-${SLUG || "inline"}`;
+const hasUsers = () => DATA && DATA.adminUsers && Object.keys(DATA.adminUsers).length > 0;
+
+async function sha256(s) {
+  const b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
+  return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, "0")).join("");
+}
+
+function enterAdmin() {
+  ADMIN = true;
+  sessionStorage.setItem(adminSes(), "1");
+  applyDraft();
+  render();
+  toast("เข้าโหมดช่างภาพแล้ว");
+}
+
+function loginFlow() {
+  if (ADMIN || !DATA) return;
+  if (!hasUsers()) {
+    enterAdmin();
+    toast("ยังไม่มีผู้ใช้ admin — ตั้งได้ที่ปุ่ม ผู้ใช้ admin");
+    return;
+  }
+  const ov = el("div", "picker");
+  ov.onclick = e => { if (e.target === ov) ov.remove(); };
+  const panel = el("div", "picker-panel");
+  panel.append(el("h3", null, "เข้าสู่โหมดช่างภาพ"),
+               el("p", null, "เฉพาะช่างภาพ/ผู้ดูแลงาน — แขกดูรูปได้เลยไม่ต้องเข้าสู่ระบบ"));
+  const wrap = el("div", "picker-list");
+  const u = el("input", "login-field"); u.placeholder = "ชื่อผู้ใช้";
+  const pw = el("input", "login-field"); pw.type = "password"; pw.placeholder = "รหัสผ่าน";
+  const btn = el("button", "btn gold", "เข้าสู่ระบบ");
+  btn.style.width = "100%";
+  btn.onclick = async () => {
+    const h = await sha256(pw.value);
+    if ((DATA.adminUsers || {})[u.value.trim()] === h) { ov.remove(); enterAdmin(); }
+    else toast("ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง");
+  };
+  pw.onkeydown = e => { if (e.key === "Enter") btn.click(); };
+  wrap.append(u, pw, btn);
+  panel.append(wrap);
+  ov.append(panel);
+  document.body.append(ov);
+  u.focus();
+}
+
+async function manageUsers() {
+  const u = prompt("ชื่อผู้ใช้ (ตั้งใหม่ หรือพิมพ์ชื่อเดิมเพื่อแก้/ลบ)");
+  if (!u || !u.trim()) return;
+  const pw = prompt(`รหัสผ่านของ "${u.trim()}" (เว้นว่าง = ลบผู้ใช้นี้)`);
+  if (pw === null) return;
+  if (!pw) { applyOp({ t: "user", u: u.trim(), h: null }); toast("ลบผู้ใช้แล้ว"); }
+  else {
+    applyOp({ t: "user", u: u.trim(), h: await sha256(pw) });
+    toast("บันทึกแล้ว — มีผลบนเว็บจริงหลังส่งออก data.json");
+  }
 }
 
 async function landing() {
@@ -229,6 +299,9 @@ function applyOp(op, persist = true) {
       const p = DATA.people.find(x => x.id === i);
       if (p) { if (op.g) p.group = op.g; else delete p.group; }
     });
+  } else if (op.t === "user") {
+    DATA.adminUsers = DATA.adminUsers || {};
+    if (op.h) DATA.adminUsers[op.u] = op.h; else delete DATA.adminUsers[op.u];
   } else if (op.t === "renum") {
     let n = 0;
     DATA.people.forEach(p => { if (/^คนที่ \d+$/.test(p.name)) p.name = "คนที่ " + (++n); });
@@ -319,6 +392,7 @@ function renderInner() {
     ? `กำลังกรองรูปเฉพาะคน · แตะ "ดูทั้งหมด" เพื่อกลับ`
     : `แสดงรูปทั้งหมด ${DATA.photos.length} รูป · แตะ<b>หน้าของคุณ</b>ด้านล่างเพื่อดูเฉพาะรูปที่มีคุณ`;
   document.body.classList.toggle("admin", ADMIN);
+  $("#btn-admin").style.display = ADMIN ? "none" : "";
 
   const c = $("#content");
   c.innerHTML = "";
@@ -372,9 +446,16 @@ function renderInner() {
     grp.onclick = groupSelected;
     const rn = el("button", "chip", "เรียงเลขใหม่");
     rn.onclick = renumber;
+    const us = el("button", "chip", "ผู้ใช้ admin");
+    us.onclick = manageUsers;
+    const lo = el("button", "chip", "ออก");
+    lo.onclick = () => {
+      sessionStorage.removeItem(adminSes());
+      location.href = location.pathname + (SLUG ? "?p=" + encodeURIComponent(SLUG) : "");
+    };
     const ex = el("button", "chip", "ส่งออก data.json");
     ex.onclick = exportJSON;
-    bar.append(mg, del, grp, rn, ex);
+    bar.append(mg, del, grp, rn, us, ex, lo);
   }
   c.append(bar);
 
