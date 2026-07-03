@@ -13,3 +13,6 @@ spike_test/faces_debug/
 # Python
 __pycache__/
 *.pyc
+
+# backups
+*.bak
