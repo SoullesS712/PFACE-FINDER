@@ -758,9 +758,13 @@ async function renamePerson(id) {
 /* ---------- บันทึกขึ้นเว็บจริงผ่าน GitHub API (เมื่อโฮสต์บน *.github.io) ---------- */
 const GH = (() => {
   const m = location.host.match(/^([^.]+)\.github\.io$/);
-  if (!m) return null;
-  const seg = location.pathname.split("/").filter(Boolean);
-  return seg.length ? { owner: m[1], repo: seg[0] } : null;
+  if (m) {
+    const seg = location.pathname.split("/").filter(Boolean);
+    return seg.length ? { owner: m[1], repo: seg[0] } : null;
+  }
+  // custom domain (เช่น facefinder.etcpproject.com) ชี้กลับ repo เดิม
+  if (/^(localhost|127\.)/.test(location.host)) return null; // dev ในเครื่อง = export ไฟล์
+  return { owner: "SoullesS712", repo: "PFACE-FINDER" };
 })();
 
 async function saveToWeb() {
